@@ -1,0 +1,26 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/mnt/d/homework/cs267/final/fem2d_heat_rectangle.cpp
+cmath
+-
+chrono
+-
+cstdlib
+-
+iostream
+-
+iomanip
+-
+fstream
+-
+ctime
+-
+cstring
+-
+

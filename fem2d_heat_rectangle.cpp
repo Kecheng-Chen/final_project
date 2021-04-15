@@ -174,7 +174,7 @@ int main ( )
 {
 # define NNODES 6
 # define QUAD_NUM 3
-# define NX 10
+# define NX 100
 # define NY 10
 
 # define ELEMENT_NUM ( NX - 1 ) * ( NY - 1 ) * 2
@@ -253,6 +253,7 @@ int main ( )
 //
 //  Set the coordinates of the nodes.
 //
+
   xy_set ( NX, NY, NODE_NUM, xl, xr, yb, yt, node_xy );
 //
 //  Organize the nodes into a grid of 6-node triangles.

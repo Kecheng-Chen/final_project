@@ -6,7 +6,6 @@
 # include <fstream>
 # include <ctime>
 # include <cstring>
-#include <omp.h>
 
 using namespace std;
 
@@ -27,7 +26,6 @@ int bandwidth ( int nnodes, int element_num, int element_node[],
                 int node_num );
 void compare ( int node_num, double node_xy[], double time, double u[] );
 int dgb_fa ( int n, int ml, int mu, double a[], int pivot[] );
-int dgb_fa_serial ( int n, int ml, int mu, double a[], int pivot[] );
 void dgb_print_some ( int m, int n, int ml, int mu, double a[], int ilo,
                       int jlo, int ihi, int jhi, string title );
 double *dgb_sl ( int n, int ml, int mu, double a[], int pivot[],
@@ -70,8 +68,7 @@ void triangulation_order6_plot ( string file_name, int node_num, double node_xy[
                                  int tri_num, int triangle_node[], int node_show, int triangle_show );
 void xy_set ( int nx, int ny, int node_num, double xl, double xr, double yb,
               double yt, double node_xy[] );
-omp_lock_t* move_locks1;
-omp_lock_t* move_locks2;
+
 //****************************************************************************80
 
 int main ( )
@@ -84,7 +81,6 @@ int main ( )
 # define ELEMENT_NUM ( NX - 1 ) * ( NY - 1 ) * 2
 # define NODE_NUM ( 2 * NX - 1 ) * ( 2 * NY - 1 )
 
-    omp_set_num_threads(2);
     double *a;
     double *dudx_exact;
     double *dudy_exact;
@@ -128,12 +124,22 @@ int main ( )
     double yt = 1.0;
 
     xy_set ( NX, NY, NODE_NUM, xl, xr, yb, yt, node_xy );
+//
+//  Organize the nodes into a grid of 6-node triangles.
+//
     grid_t6 ( NX, NY, NNODES, ELEMENT_NUM, element_node );
+//
+//  Set the quadrature rule for assembly.
+//
     quad_a ( node_xy, element_node, ELEMENT_NUM, NODE_NUM,
              NNODES, wq, xq, yq );
+//
+//  Determine the areas of the elements.
+//
     area_set ( NODE_NUM, node_xy, NNODES, ELEMENT_NUM,
                element_node, element_area );
     node_boundary = node_boundary_set ( NX, NY, NODE_NUM );
+
     ib = bandwidth ( NNODES, ELEMENT_NUM, element_node, NODE_NUM );
 
     cout << "\n";
@@ -144,7 +150,9 @@ int main ( )
     time_final = 0.5;
     time_step_num = 10;
     time_step_size = ( time_final - time_init ) / ( double ) ( time_step_num );
-
+//
+//  Allocate space.
+//
     a = new double[(3*ib+1)*NODE_NUM];
     dudx_exact = new double[NODE_NUM];
     dudy_exact = new double[NODE_NUM];
@@ -153,7 +161,9 @@ int main ( )
     u = new double[NODE_NUM];
     u_exact = new double[NODE_NUM];
     u_old = new double[NODE_NUM];
-
+//
+//  Set the value of U at the initial time.
+//
     time = time_init;
     exact_u ( NODE_NUM, node_xy, time, u_exact, dudx_exact, dudy_exact );
 
@@ -162,62 +172,68 @@ int main ( )
         u[node] = u_exact[node];
     }
 
+//  time_unit.open ( time_file_name.c_str ( ) );
+
+//  if ( !time_unit )
+//  {
+//    cout << "\n";
+//    cout << "FEM2D_HEAT_RECTANGLE- Warning!\n";
+//    cout << "  Could not write the time file \""
+//         << time_file_name << "\".\n";
+//    exit ( 1 );
+//  }
+
+//  time_unit << "  " << setw(14) << time << "\n";
+
+//  solution_write ( NODE_NUM, u, u_file_name );
+//
+//  Time looping.
+//
     cout << "\n";
     cout << "     Time        L2 Error       H1 Error\n";
     cout << "\n";
 
-    move_locks1 = (omp_lock_t*) malloc(sizeof(omp_lock_t) * NODE_NUM);
-    move_locks2 = (omp_lock_t*) malloc(sizeof(omp_lock_t) * NODE_NUM * NODE_NUM);
-    for (int i = 0; i < NODE_NUM; i++) {
-        omp_init_lock(&move_locks1[i]);
-        for (int j = 0; j < NODE_NUM; j++){
-            omp_init_lock(&move_locks2[j+i*NODE_NUM]);
-        }
-    }
-
     auto start_time = std::chrono::steady_clock::now();
-    //#pragma omp parallel default(shared)
+    for ( time_step = 1; time_step <= time_step_num; time_step++ )
     {
-        for ( time_step = 1; time_step <= time_step_num; time_step++ )
+        for ( node = 0; node < NODE_NUM; node++ )
         {
-            #pragma omp parallel for
-            for ( node = 0; node < NODE_NUM; node++ )
-            {
-                u_old[node] = u[node];
-            }
-            delete[] u;
-
-            time = ( ( double ) ( time_step_num - time_step ) * time_init
-                     + ( double ) (                 time_step ) * time_final )
-                   / ( double ) ( time_step_num             );
-
-            //auto start_time = std::chrono::steady_clock::now();
-            assemble_adjust( NODE_NUM, node_xy, NNODES,
-                       ELEMENT_NUM, element_node, QUAD_NUM,
-                       wq, xq, yq, element_area, ib, time, a, f, time_step_size, u_old);
-            adjust_boundary ( NODE_NUM, node_xy, node_boundary, ib, time, a, f );
-            //auto end_time = std::chrono::steady_clock::now();
-            //std::chrono::duration<double> diff = end_time - start_time;
-            //double seconds = diff.count();
-            //std::cout << "Simulation Time1 = " << seconds << " seconds\n";
-
-            //start_time = std::chrono::steady_clock::now();
-            ierr = dgb_fa ( NODE_NUM, ib, ib, a, pivot );
-            //end_time = std::chrono::steady_clock::now();
-            //diff = end_time - start_time;
-            //seconds = diff.count();
-            //std::cout << "Simulation Time2 = " << seconds << " seconds\n";
-            job = 0;
-            u = dgb_sl ( NODE_NUM, ib, ib, a, pivot, f, job );
-            //errors ( element_area, element_node, node_xy, u,
-            //        ELEMENT_NUM, NNODES, NODE_NUM, time, &el2, &eh1 );
+            u_old[node] = u[node];
         }
+        delete[] u;
+
+        time = ( ( double ) ( time_step_num - time_step ) * time_init
+                 + ( double ) (                 time_step ) * time_final )
+               / ( double ) ( time_step_num             );
+
+        //auto start_time = std::chrono::steady_clock::now();
+        assemble_adjust ( NODE_NUM, node_xy, NNODES,
+                   ELEMENT_NUM, element_node, QUAD_NUM,
+                   wq, xq, yq, element_area, ib, time, a, f, time_step_size, u_old);
+        adjust_boundary ( NODE_NUM, node_xy, node_boundary, ib, time, a, f );
+        //auto end_time = std::chrono::steady_clock::now();
+        //std::chrono::duration<double> diff = end_time - start_time;
+        //double seconds = diff.count();
+        //std::cout << "Simulation Time1 = " << seconds << " seconds\n";
+
+        //start_time = std::chrono::steady_clock::now();
+        ierr = dgb_fa ( NODE_NUM, ib, ib, a, pivot );
+        //end_time = std::chrono::steady_clock::now();
+        //diff = end_time - start_time;
+        //seconds = diff.count();
+        //std::cout << "Simulation Time2 = " << seconds << " seconds\n";
+        job = 0;
+        u = dgb_sl ( NODE_NUM, ib, ib, a, pivot, f, job );
+        //errors ( element_area, element_node, node_xy, u,
+        //        ELEMENT_NUM, NNODES, NODE_NUM, time, &el2, &eh1 );
     }
     auto end_time = std::chrono::steady_clock::now();
     std::chrono::duration<double> diff = end_time - start_time;
     double seconds = diff.count();
     std::cout << "Simulation Time = " << seconds << " seconds\n";
-
+//
+//  Deallocate memory.
+//
     delete [] a;
     delete [] dudx_exact;
     delete [] dudy_exact;
@@ -227,10 +243,17 @@ int main ( )
     delete [] u;
     delete [] u_exact;
     delete [] u_old;
+
+//  time_unit.close ( );
+//
+//  Terminate.
+//
     cout << "\n";
     cout << "FEM2D_HEAT_RECTANGLE:\n";
     cout << "  Normal end of execution.\n";
     cout << "\n";
+//  timestamp ( );
+
     return 0;
 # undef ELEMENT_NUM
 # undef NNODES
@@ -378,25 +401,71 @@ void adjust_backward_euler ( int node_num, double node_xy[], int nnodes,
 
 void adjust_boundary ( int node_num, double node_xy[], int node_boundary[],
                        int ib, double time, double a[], double f[] )
+
+//****************************************************************************80
+//
+//  Purpose:
+//
+//    ADJUST_BOUNDARY modifies the linear system for boundary conditions.
+//
+//  Licensing:
+//
+//    This code is distributed under the GNU LGPL license.
+//
+//  Modified:
+//
+//    17 April 2006
+//
+//  Author:
+//
+//    John Burkardt
+//
+//  Parameters:
+//
+//    Input, int NODE_NUM, the number of nodes.
+//
+//    Input, double NODE_XY[2*NODE_NUM], the coordinates of nodes.
+//
+//    Input, int NODE_BOUNDARY[NODE_NUM], is
+//    0, if a node is an interior node;
+//    1, if a node is a Dirichlet boundary node.
+//
+//    Input, int IB, the half-bandwidth of the matrix.
+//
+//    Input, double TIME, the current time.
+//
+//    Input/output, double A[(3*IB+1)*NODE_NUM], the NODE_NUM by NODE_NUM
+//    coefficient matrix, stored in a compressed format.
+//    On output, A has been adjusted for boundary conditions.
+//
+//    Input/output, double F[NODE_NUM], the right hand side.
+//    On output, F has been adjusted for boundary conditions.
+//
 {
     double *dudx_exact;
     double *dudy_exact;
+    int j;
+    int jhi;
+    int jlo;
+    int node;
     double *u_exact;
+//
+//  Get the exact solution at every node.
+//
     u_exact = new double[node_num];
     dudx_exact = new double[node_num];
     dudy_exact = new double[node_num];
 
     exact_u ( node_num, node_xy, time, u_exact, dudx_exact, dudy_exact );
 
-    #pragma omp parallel for
-    for (int node = 0; node < node_num; node++ )
+    for ( node = 0; node < node_num; node++ )
     {
         if ( node_boundary[node] != 0 )
         {
-            int jlo = i4_max ( node - ib, 0 );
-            int jhi = i4_min ( node + ib, node_num - 1 );
+            jlo = i4_max ( node - ib, 0 );
+            jhi = i4_min ( node + ib, node_num - 1 );
 
-            for (int j = jlo; j <= jhi; j++ )
+            for ( j = jlo; j <= jhi; j++ )
             {
                 a[node-j+2*ib+j*(3*ib+1)] = 0.0;
             }
@@ -495,47 +564,150 @@ void area_set ( int node_num, double node_xy[], int nnodes,
 void assemble_adjust ( int node_num, double node_xy[], int nnodes, int element_num,
                 int element_node[], int quad_num, double wq[], double xq[], double yq[],
                 double element_area[], int ib, double time, double a[], double f[], double time_step_size, double u_old[])
+
+//****************************************************************************80*
+//
+//  Purpose:
+//
+//    ASSEMBLE assembles the matrix and right-hand side using piecewise quadratics.
+//
+//  Discussion:
+//
+//    The matrix is known to be banded.  A special matrix storage format
+//    is used to reduce the space required.  Details of this format are
+//    discussed in the routine DGB_FA.
+//
+//  Licensing:
+//
+//    This code is distributed under the GNU LGPL license.
+//
+//  Modified:
+//
+//    14 April 2006
+//
+//  Author:
+//
+//    C++ version by John Burkardt
+//
+//  Parameters:
+//
+//    Input, int NODE_NUM, the number of nodes.
+//
+//    Input, double NODE_XY[2*NODE_NUM], the X and Y coordinates of nodes.
+//
+//    Input, int NNODES, the number of nodes used to form one element.
+//
+//    Input, int ELEMENT_NUM, the number of elements.
+//
+//    Input, int ELEMENT_NODE[NNODES*ELEMENT_NUM]; ELEMENT_NODE(I,J) is the global
+//    index of local node I in element J.
+//
+//    Input, int QUAD_NUM, the number of quadrature points used in assembly.
+//
+//    Input, double WQ[QUAD_NUM], quadrature weights.
+//
+//    Input, double XQ[QUAD_NUM*ELEMENT_NUM], YQ[QUAD_NUM*ELEMENT_NUM], the X and Y
+//    coordinates of the quadrature points in each element.
+//
+//    Input, double ELEMENT_AREA[ELEMENT_NUM], the area of each element.
+//
+//    Input, int IB, the half-bandwidth of the matrix.
+//
+//    Input, double TIME, the current time.
+//
+//    Output, double A[(3*IB+1)*NODE_NUM], the NODE_NUM by NODE_NUM
+//    coefficient matrix, stored in a compressed format.
+//
+//    Output, double F[NODE_NUM], the right hand side.
+//
+//  Local parameters:
+//
+//    Local, double BI, DBIDX, DBIDY, the value of some basis function
+//    and its first derivatives at a quadrature point.
+//
+//    Local, double BJ, DBJDX, DBJDY, the value of another basis
+//    function and its first derivatives at a quadrature point.
+//
 {
-    #pragma omp parallel for
-    for (int j = 0; j < node_num; j++ )
+    double aij;
+    int basis;
+    double bi;
+    double bj;
+    double dbidx;
+    double dbidy;
+    double dbjdx;
+    double dbjdy;
+    int element;
+    int i;
+    int j;
+    int node;
+    int quad;
+    int test;
+    double w;
+    double x;
+    double y;
+//
+//  Initialize the arrays to zero.
+//
+    for ( i = 0; i < node_num; i++ )
     {
-        f[j] = 0.0;
-        for (int i = 0; i < 3*ib + 1; i++ )
+        f[i] = 0.0;
+    }
+
+    for ( j = 0; j < node_num; j++ )
+    {
+        for ( i = 0; i < 3*ib + 1; i++ )
         {
             a[i+j*(3*ib+1)] = 0.0;
         }
     }
-
-    #pragma omp parallel for
-    for (int element = 0; element < element_num; element++ )
+//
+//  The actual values of A and F are determined by summing up
+//  contributions from all the elements.
+//
+    for ( element = 0; element < element_num; element++ )
     {
-        for (int quad = 0; quad < quad_num; quad++ )
+        for ( quad = 0; quad < quad_num; quad++ )
         {
-            double x = xq[quad+element*quad_num];
-            double y = yq[quad+element*quad_num];
-            double w = element_area[element] * wq[quad];
-            for ( int test = 0; test < nnodes; test++ )
+            x = xq[quad+element*quad_num];
+            y = yq[quad+element*quad_num];
+            w = element_area[element] * wq[quad];
+
+            for ( test = 0; test < nnodes; test++ )
             {
-                int node = element_node[test+element*nnodes];
-                double bi,bj,dbidx,dbidy,dbjdx,dbjdy;
+                node = element_node[test+element*nnodes];
+
                 qbf ( x, y, element, test, node_xy, element_node,
                       element_num, nnodes, node_num, &bi, &dbidx, &dbidy );
-                omp_set_lock(&move_locks1[node]);
+
                 f[node] = f[node] + w * rhs ( x, y, time ) * bi + w * bi * u_old[node] / time_step_size;
-                omp_unset_lock(&move_locks1[node]);
-                for (int basis = 0; basis < nnodes; basis++ )
+//
+//  We are about to compute a contribution associated with the
+//  I-th test function and the J-th basis function, and add this
+//  to the entry A(I,J).
+//
+//  Because of the compressed storage of the matrix, the element
+//  will actually be stored in A(I-J+2*IB+1,J).
+//
+//  An extra complication: we are storing the array as a vector.
+//
+//  Therefore, we ACTUALLY store the entry in A[I-J+2*IB+1-1 + J * (3*IB+1)];
+//
+                for ( basis = 0; basis < nnodes; basis++ )
                 {
-                    int j = element_node[basis+element*nnodes];
+                    j = element_node[basis+element*nnodes];
+
                     qbf ( x, y, element, basis, node_xy, element_node,
                           element_num, nnodes, node_num, &bj, &dbjdx, &dbjdy );
-                    double aij = dbidx * dbjdx + dbidy * dbjdy;
-                    omp_set_lock(&move_locks2[node+j*node_num]);
-                    a[node-j+2*ib+j*(3*ib+1)] = a[node-j+2*ib+j*(3*ib+1)] + w * aij + w * bi * bj / time_step_size;
-                    omp_unset_lock(&move_locks2[node+j*node_num]);
+
+                    aij = dbidx * dbjdx + dbidy * dbjdy;
+
+                    a[node-j+2*ib+j*(3*ib+1)] = a[node-j+2*ib+j*(3*ib+1)] + w * aij+ w * bi * bj / time_step_size;
                 }
             }
         }
     }
+
     return;
 }
 //****************************************************************************80
@@ -677,26 +849,59 @@ void compare ( int node_num, double node_xy[], double time, double u[] )
 int dgb_fa ( int n, int ml, int mu, double a[], int pivot[] )
 {
     int col = 2 * ml + mu + 1;
-    int m = ml + mu + 1;
+    int i;
+    int i0;
+    int j;
+    int j0;
+    int j1;
+    int ju;
+    int jz;
+    int k;
+    int l;
+    int lm;
+    int m;
+    int mm;
+    double t;
 
-    #pragma omp parallel for
-    for (int jz = mu + 2; jz <= i4_min ( n, m ) - 1; jz++ )
+    m = ml + mu + 1;
+//
+//  Zero out the initial fill-in columns.
+//
+    j0 = mu + 2;
+    j1 = i4_min ( n, m ) - 1;
+
+    for ( jz = j0; jz <= j1; jz++ )
     {
-        int i0 = m + 1 - jz;
-        for (int i = i0; i <= ml; i++ )
+        i0 = m + 1 - jz;
+        for ( i = i0; i <= ml; i++ )
         {
             a[i-1+(jz-1)*col] = 0.0;
         }
     }
 
-    int ju = 0;
+    jz = j1;
+    ju = 0;
 
-    for (int k = 1; k <= n-1; k++ )
+    for ( k = 1; k <= n-1; k++ )
     {
-        int lm = i4_min ( ml, n-k );
-        int l = m;
+//
+//  Zero out the next fill-in column.
+//
+        jz = jz + 1;
+        if ( jz <= n )
+        {
+            for ( i = 1; i <= ml; i++ )
+            {
+                a[i-1+(jz-1)*col] = 0.0;
+            }
+        }
+//
+//  Find L = pivot index.
+//
+        lm = i4_min ( ml, n-k );
+        l = m;
 
-        for (int j = m+1; j <= m + lm; j++ )
+        for ( j = m+1; j <= m + lm; j++ )
         {
             if ( fabs ( a[l-1+(k-1)*col] ) < fabs ( a[j-1+(k-1)*col] ) )
             {
@@ -705,50 +910,64 @@ int dgb_fa ( int n, int ml, int mu, double a[], int pivot[] )
         }
 
         pivot[k-1] = l + k - m;
-        int jz = i4_min ( n, m ) - 1 + k;
-        double t = a[l-1+(k-1)*col];
-        int mm = m;
-
-        if ( jz <= n )
+//
+//  Zero pivot implies this column already triangularized.
+//
+        if ( a[l-1+(k-1)*col] == 0.0 )
         {
-            for (int i = 1; i <= ml; i++ )
-            {
-                a[i-1+(jz-1)*col] = 0.0;
-            }
+            cout << "\n";
+            cout << "DGB_FA - Fatal error!\n";
+            cout << "  Zero pivot on step " << k << "\n";
+            return k;
         }
-
+//
+//  Interchange if necessary.
+//
+        t                = a[l-1+(k-1)*col];
         a[l-1+(k-1)*col] = a[m-1+(k-1)*col];
         a[m-1+(k-1)*col] = t;
-
-        for (int i = m+1; i <= m+lm; i++ )
+//
+//  Compute multipliers.
+//
+        for ( i = m+1; i <= m+lm; i++ )
         {
-            a[i-1+(k-1)*col] /= -t;
+            a[i-1+(k-1)*col] = - a[i-1+(k-1)*col] / a[m-1+(k-1)*col];
         }
-
+//
+//  Row elimination with column indexing.
+//
         ju = i4_max ( ju, mu + pivot[k-1] );
         ju = i4_min ( ju, n );
+        mm = m;
 
-        #pragma omp parallel for private (t)
-        for (int j = k+1; j <= ju; j++ )
+        for ( j = k+1; j <= ju; j++ )
         {
-            int l_temp = l-j+k;
-            int mm_temp = mm-j+k;
+            l = l - 1;
+            mm = mm - 1;
 
-            if ( l_temp != mm_temp )
+            if ( l != mm )
             {
-                t                 = a[l_temp-1+(j-1)*col];
-                a[l_temp-1+(j-1)*col]  = a[mm_temp-1+(j-1)*col];
-                a[mm_temp-1+(j-1)*col] = t;
+                t                 = a[l-1+(j-1)*col];
+                a[l-1+(j-1)*col]  = a[mm-1+(j-1)*col];
+                a[mm-1+(j-1)*col] = t;
             }
-            for (int i = 1; i <= lm; i++ )
+            for ( i = 1; i <= lm; i++ )
             {
-                a[mm_temp+i-1+(j-1)*col] = a[mm_temp+i-1+(j-1)*col]
-                                           + a[mm_temp-1+(j-1)*col] * a[m+i-1+(k-1)*col];
+                a[mm+i-1+(j-1)*col] = a[mm+i-1+(j-1)*col]
+                                      + a[mm-1+(j-1)*col] * a[m+i-1+(k-1)*col];
             }
         }
     }
 
     pivot[n-1] = n;
+
+    if ( a[m-1+(n-1)*col] == 0.0 )
+    {
+        cout << "\n";
+        cout << "DGB_FA - Fatal error!\n";
+        cout << "  Zero pivot on step " << n << "\n";
+        return n;
+    }
     return 0;
 }
 //****************************************************************************80
@@ -878,18 +1097,85 @@ void dgb_print_some ( int m, int n, int ml, int mu, double a[], int ilo,
 
 double *dgb_sl ( int n, int ml, int mu, double a[], int pivot[],
                  double b[], int job )
+
+//****************************************************************************80
+//
+//  Purpose:
+//
+//    DGB_SL solves a system factored by DGB_FA.
+//
+//  Discussion:
+//
+//    The DGB storage format is used for an M by N banded matrix, with lower bandwidth ML
+//    and upper bandwidth MU.  Storage includes room for ML extra superdiagonals,
+//    which may be required to store nonzero entries generated during Gaussian
+//    elimination.
+//
+//    The original M by N matrix is "collapsed" downward, so that diagonals
+//    become rows of the storage array, while columns are preserved.  The
+//    collapsed array is logically 2*ML+MU+1 by N.
+//
+//    The two dimensional array can be further reduced to a one dimensional
+//    array, stored by columns.
+//
+//  Licensing:
+//
+//    This code is distributed under the GNU LGPL license.
+//
+//  Modified:
+//
+//    20 February 2004
+//
+//  Author:
+//
+//    C++ version by John Burkardt
+//
+//  Reference:
+//
+//    Jack Dongarra, Jim Bunch, Cleve Moler, Pete Stewart,
+//    LINPACK User's Guide,
+//    SIAM, 1979
+//
+//  Parameters:
+//
+//    Input, int N, the order of the matrix.
+//    N must be positive.
+//
+//    Input, int ML, MU, the lower and upper bandwidths.
+//    ML and MU must be nonnegative, and no greater than N-1.
+//
+//    Input, double A[(2*ML+MU+1)*N], the LU factors from DGB_FA.
+//
+//    Input, int PIVOT[N], the pivot vector from DGB_FA.
+//
+//    Input, double B[N], the right hand side vector.
+//
+//    Input, int JOB.
+//    0, solve A * x = b.
+//    nonzero, solve A' * x = b.
+//
+//    Output, double DGB_SL[N], the solution.
+//
 {
     int col = 2 * ml + mu + 1;
+    int i;
+    int k;
+    int l;
+    int la;
+    int lb;
+    int lm;
+    int m;
+    double t;
     double *x;
+
     x = new double[n];
 
-    #pragma omp parallel for
-    for (int i = 0; i < n; i++ )
+    for ( i = 0; i < n; i++ )
     {
         x[i] = b[i];
     }
 //
-    int m = mu + ml + 1;
+    m = mu + ml + 1;
 //
 //  Solve A * x = b.
 //
@@ -900,38 +1186,77 @@ double *dgb_sl ( int n, int ml, int mu, double a[], int pivot[],
 //
         if ( 1 <= ml )
         {
-            //#pragma omp for ordered schedule(static, 1)
-            for (int k = 1; k <= n-1; k++ )
+            for ( k = 1; k <= n-1; k++ )
             {
-                int lm = i4_min ( ml, n-k );
-                int l = pivot[k-1];
-                //#pragma omp ordered
+                lm = i4_min ( ml, n-k );
+                l = pivot[k-1];
+
+                if ( l != k )
                 {
-                    if ( l != k )
-                    {
-                        double t  = x[l-1];
-                        x[l-1] = x[k-1];
-                        x[k-1] = t;
-                    }
-                    for (int i = 1; i <= lm; i++ )
-                    {
-                        x[k+i-1] = x[k+i-1] + x[k-1] * a[m+i-1+(k-1)*col];
-                    }
-                };
+                    t      = x[l-1];
+                    x[l-1] = x[k-1];
+                    x[k-1] = t;
+                }
+                for ( i = 1; i <= lm; i++ )
+                {
+                    x[k+i-1] = x[k+i-1] + x[k-1] * a[m+i-1+(k-1)*col];
+                }
             }
         }
 //
 //  Solve U * X = Y.
 //
-        for (int k = n; 1 <= k; k-- )
+        for ( k = n; 1 <= k; k-- )
         {
-            int lm = i4_min ( k, m ) - 1;
-            int la = m - lm;
-            int lb = k - lm;
             x[k-1] = x[k-1] / a[m-1+(k-1)*col];
-            for (int i = 0; i <= lm-1; i++ )
+            lm = i4_min ( k, m ) - 1;
+            la = m - lm;
+            lb = k - lm;
+            for ( i = 0; i <= lm-1; i++ )
             {
                 x[lb+i-1] = x[lb+i-1] - x[k-1] * a[la+i-1+(k-1)*col];
+            }
+        }
+    }
+//
+//  Solve A' * X = B.
+//
+    else
+    {
+//
+//  Solve U' * Y = B.
+//
+        for ( k = 1; k <= n; k++ )
+        {
+            lm = i4_min ( k, m ) - 1;
+            la = m - lm;
+            lb = k - lm;
+            for ( i = 0; i <= lm-1; i++ )
+            {
+                x[k-1] = x[k-1] - x[lb+i-1] * a[la+i-1+(k-1)*col];
+            }
+            x[k-1] = x[k-1] / a[m-1+(k-1)*col];
+        }
+//
+//  Solve L' * X = Y.
+//
+        if ( 1 <= ml )
+        {
+            for ( k = n-1; 1 <= k; k-- )
+            {
+                lm = i4_min ( ml, n-k );
+                for ( i = 1; i <= lm; i++ )
+                {
+                    x[k-1] = x[k-1] + x[k+i-1] * a[m+i-1+(k-1)*col];
+                }
+                l = pivot[k-1];
+
+                if ( l != k )
+                {
+                    t      = x[l-1];
+                    x[l-1] = x[k-1];
+                    x[k-1] = t;
+                }
             }
         }
     }
@@ -1183,14 +1508,70 @@ void errors ( double element_area[], int element_node[], double node_xy[],
 
 void exact_u ( int node_num, double node_xy[], double time, double u[],
                double dudx[], double dudy[] )
+
+//****************************************************************************80
+//
+//  Purpose:
+//
+//    EXACT_U calculates the exact solution and its first derivatives.
+//
+//  Discussion:
+//
+//    It is assumed that the user knows the exact solution and its
+//    derivatives.  This, of course, is NOT true for a real computation.
+//    But for this code, we are interested in studying the convergence
+//    behavior of the approximations, and so we really need to assume
+//    we know the correct solution.
+//
+//    As a convenience, this single routine is used for several purposes:
+//
+//    * it supplies the initial value function H(X,Y,T);
+//    * it supplies the boundary value function G(X,Y,T);
+//    * it is used by the COMPARE routine to make a node-wise comparison
+//      of the exact and approximate solutions.
+//    * it is used by the ERRORS routine to estimate the integrals of
+//      the L2 and H1 errors of approximation.
+//
+//    DUDX and DUDY are only needed for the ERRORS calculation.
+//
+//  Licensing:
+//
+//    This code is distributed under the GNU LGPL license.
+//
+//  Modified:
+//
+//    16 April 2004
+//
+//  Author:
+//
+//    C++ version by John Burkardt
+//
+//  Parameters:
+//
+//    Input, int NODE_NUM, the number of nodes at which
+//    a value is desired.
+//
+//    Input, double NODE_XY(2,NODE_NUM), the coordinates of
+//    the points where a value is desired.
+//
+//    Input, double TIME, the current time.
+//
+//    Output, double U[NODE_NUM], the exact solution.
+//
+//    Output, double DUDX[NODE_NUM], DUDY[NODE_NUM],
+//    the X and Y derivatives of the exact solution.
+//
 {
 # define PI 3.141592653589793
 
-    #pragma omp parallel for
-    for (int node = 0; node < node_num; node++ )
+    int node;
+    double x;
+    double y;
+
+    for ( node = 0; node < node_num; node++ )
     {
-        double x = node_xy[0+node*2];
-        double y = node_xy[1+node*2];
+        x = node_xy[0+node*2];
+        y = node_xy[1+node*2];
 
         u[node]    =      sin ( PI * x ) * sin ( PI * y ) * exp ( - time );
         dudx[node] = PI * cos ( PI * x ) * sin ( PI * y ) * exp ( - time );
@@ -1302,23 +1683,96 @@ void filename_inc ( string *filename )
 //****************************************************************************80
 
 void grid_t6 ( int nx, int ny, int nnodes, int element_num, int element_node[] )
+
+//****************************************************************************80
+//
+//  Purpose:
+//
+//    GRID_T6 produces a grid of pairs of 6 node triangles.
+//
+//  Example:
+//
+//    Input:
+//
+//      NX = 4, NY = 3
+//
+//    Output:
+//
+//      ELEMENT_NODE =
+//         1,  3, 15,  2,  9,  8;
+//        17, 15,  3, 16,  9, 10;
+//         3,  5, 17,  4, 11, 10;
+//        19, 17,  5, 18, 11, 12;
+//         5,  7, 19,  6, 13, 12;
+//        21, 19,  7, 20, 13, 14;
+//        15, 17, 29, 16, 23, 22;
+//        31, 29, 17, 30, 23, 24;
+//        17, 19, 31, 18, 25, 24;
+//        33, 31, 19, 32, 25, 26;
+//        19, 21, 33, 20, 27, 26;
+//        35, 33, 21, 34, 27, 28.
+//
+//  Diagram:
+//
+//   29-30-31-32-33-34-35
+//    |\ 8  |\10  |\12  |
+//    | \   | \   | \   |
+//   22 23 24 25 26 27 28
+//    |   \ |   \ |   \ |
+//    |  7 \|  9 \| 11 \|
+//   15-16-17-18-19-20-21
+//    |\ 2  |\ 4  |\ 6  |
+//    | \   | \   | \   |
+//    8  9 10 11 12 13 14
+//    |   \ |   \ |   \ |
+//    |  1 \|  3 \|  5 \|
+//    1--2--3--4--5--6--7
+//
+//  Licensing:
+//
+//    This code is distributed under the GNU LGPL license.
+//
+//  Modified:
+//
+//    16 April 2006
+//
+//  Author:
+//
+//    John Burkardt
+//
+//  Parameters:
+//
+//    Input, int NX, NY, controls the number of elements along the
+//    X and Y directions.  The number of elements will be
+//    2 * ( NX - 1 ) * ( NY - 1 ).
+//
+//    Input, int NNODES, the number of local nodes per element.
+//
+//    Input, int ELEMENT_NUM, the number of elements.
+//
+//    Output, int ELEMENT_NODE[NNODES*ELEMENT_NUM];
+//    ELEMENT_NODE(I,J) is the index of the I-th node of the J-th element.
+//
 {
-    //#pragma omp parallel for schedule(static,8)
-    for (int j = 1; j <= ny - 1; j++ )
+    int c;
+    int e;
+    int element;
+    int i;
+    int j;
+    int n;
+    int ne;
+    int nw;
+    int s;
+    int se;
+    int sw;
+    int w;
+
+    element = 0;
+
+    for ( j = 1; j <= ny - 1; j++ )
     {
-        for (int i = 1; i <= nx - 1; i++ )
+        for ( i = 1; i <= nx - 1; i++ )
         {
-            int c;
-            int e;
-            int element;
-            int n;
-            int ne;
-            int nw;
-            int s;
-            int se;
-            int sw;
-            int w;
-            element = (nx-1)*2*(j-1)+(i-1)*2;
             sw = ( j - 1 ) * 2 * ( 2 * nx - 1 ) + 2 * i - 2;
             w  = sw + 1;
             nw = sw + 2;
@@ -1345,6 +1799,7 @@ void grid_t6 ( int nx, int ny, int nnodes, int element_num, int element_node[] )
             element_node[3+element*nnodes] = n;
             element_node[4+element*nnodes] = c;
             element_node[5+element*nnodes] = e;
+            element = element + 1;
         }
     }
 
@@ -1970,6 +2425,98 @@ void nodes_write ( int node_num, double node_xy[], string output_filename )
 void qbf ( double x, double y, int element, int inode, double node_xy[],
            int element_node[], int element_num, int nnodes,
            int node_num, double *b, double *dbdx, double *dbdy )
+
+//****************************************************************************80
+//
+//  Purpose:
+//
+//    QBF evaluates the quadratic basis functions.
+//
+//  Discussion:
+//
+//    This routine assumes that the "midpoint" nodes are, in fact,
+//    exactly the average of the two extreme nodes.  This is NOT true
+//    for a general quadratic triangular element.
+//
+//    Assuming this property of the midpoint nodes makes it easy to
+//    determine the values of (R,S) in the reference element that
+//    correspond to (X,Y) in the physical element.
+//
+//    Once we know the (R,S) coordinates, it's easy to evaluate the
+//    basis functions and derivatives.
+//
+//  The physical element T6:
+//
+//    In this picture, we don't mean to suggest that the bottom of
+//    the physical triangle is horizontal.  However, we do assume that
+//    each of the sides is a straight line, and that the intermediate
+//    points are exactly halfway on each side.
+//
+//    |
+//    |
+//    |        3
+//    |       . .
+//    |      .   .
+//    Y     6     5
+//    |    .       .
+//    |   .         .
+//    |  1-----4-----2
+//    |
+//    +--------X-------->
+//
+//  Reference element T6:
+//
+//    In this picture of the reference element, we really do assume
+//    that one side is vertical, one horizontal, of length 1.
+//
+//    |
+//    |
+//    1  3
+//    |  |.
+//    |  | .
+//    S  6  5
+//    |  |   .
+//    |  |    .
+//    0  1--4--2
+//    |
+//    +--0--R--1-------->
+//
+//  Licensing:
+//
+//    This code is distributed under the GNU LGPL license.
+//
+//  Modified:
+//
+//    16 April 2006
+//
+//  Author:
+//
+//    John Burkardt
+//
+//  Parameters:
+//
+//    Input, double X, Y, the (global) coordinates of the point
+//    at which the basis function is to be evaluated.
+//
+//    Input, int ELEMENT, the index of the element which contains the point.
+//
+//    Input, int INODE, the local index, between 0 and 5, that
+//    specifies which basis function is to be evaluated.
+//
+//    Input, double NODE_XY[2*NODE_NUM], the nodes.
+//
+//    Input, int ELEMENT_NODE[NNODES*ELEMENT_NUM];
+//    ELEMENT_NODE(I,J) is the global index of local node I in element J.
+//
+//    Input, int ELEMENT_NUM, the number of elements.
+//
+//    Input, int NNODES, the number of nodes used to form one element.
+//
+//    Input, int NODE_NUM, the number of nodes.
+//
+//    Output, double *B, *DBDX, *DBDY, the value of the basis function
+//    and its X and Y derivatives at (X,Y).
+//
 {
     double dbdr;
     double dbds;
@@ -1989,7 +2536,20 @@ void qbf ( double x, double y, int element, int inode, double node_xy[],
         xn[i] = node_xy[0+element_node[i+element*nnodes]*2];
         yn[i] = node_xy[1+element_node[i+element*nnodes]*2];
     }
-
+//
+//  Determine the (R,S) coordinates corresponding to (X,Y).
+//
+//  What is happening here is that we are solving the linear system:
+//
+//    ( X2-X1  X3-X1 ) * ( R ) = ( X - X1 )
+//    ( Y2-Y1  Y3-Y1 )   ( S )   ( Y - Y1 )
+//
+//  by computing the inverse of the coefficient matrix and multiplying
+//  it by the right hand side to get R and S.
+//
+//  The values of dRdX, dRdY, dSdX and dSdY are easily from the formulas
+//  for R and S.
+//
     det =   ( xn[1] - xn[0] ) * ( yn[2] - yn[0] )
             - ( xn[2] - xn[0] ) * ( yn[1] - yn[0] );
 
@@ -2004,7 +2564,11 @@ void qbf ( double x, double y, int element, int inode, double node_xy[],
 
     dsdx = ( yn[0] - yn[1] ) / det;
     dsdy = ( xn[1] - xn[0] ) / det;
-
+//
+//  The basis functions can now be evaluated in terms of the
+//  reference coordinates R and S.  It's also easy to determine
+//  the values of the derivatives with respect to R and S.
+//
     if ( inode == 0 )
     {
         *b   =   2.0 *     ( 1.0 - r - s ) * ( 0.5 - r - s );
@@ -2048,8 +2612,13 @@ void qbf ( double x, double y, int element, int inode, double node_xy[],
         cout << "  Request for local basis function INODE = " << inode << "\n";
         exit ( 1 );
     }
+//
+//  We need to convert the derivative information from (R(X,Y),S(X,Y))
+//  to (X,Y) using the chain rule.
+//
     *dbdx = dbdr * drdx + dbds * dsdx;
     *dbdy = dbdr * drdy + dbds * dsdy;
+
     return;
 }
 //****************************************************************************80
@@ -2057,23 +2626,61 @@ void qbf ( double x, double y, int element, int inode, double node_xy[],
 void quad_a ( double node_xy[], int element_node[],
               int element_num, int node_num, int nnodes, double wq[], double xq[],
               double yq[] )
+
+//****************************************************************************80
+//
+//  Purpose:
+//
+//    QUAD_A sets the quadrature rule for assembly.
+//
+//  Licensing:
+//
+//    This code is distributed under the GNU LGPL license.
+//
+//  Modified:
+//
+//    16 April 2006
+//
+//  Author:
+//
+//    C++ version by John Burkardt
+//
+//  Parameters:
+//
+//    Input, double NODE_XY[2*NODE_NUM], the nodes.
+//
+//    Input, int ELEMENT_NODE[NNODES*ELEMENT_NUM];
+//    ELEMENT_NODE(I,J) is the global index of local node I in element J.
+//
+//    Input, int ELEMENT_NUM, the number of elements.
+//
+//    Input, int NODE_NUM, the number of nodes.
+//
+//    Input, int NNODES, the number of nodes used to form one element.
+//
+//    Output, double WQ[3], quadrature weights.
+//
+//    Output, double XQ[3*ELEMENT_NUM], YQ[3*ELEMENT_NUM], the
+//    coordinates of the quadrature points in each element.
+//
 {
+    int element;
+    int ip1;
+    int ip2;
+    int ip3;
+    double x1;
+    double x2;
+    double x3;
+    double y1;
+    double y2;
+    double y3;
+
     wq[0] = 1.0 / 3.0;
     wq[1] = wq[0];
     wq[2] = wq[0];
 
-    //#pragma omp parallel for schedule(static,8)
-    for (int element = 0; element < element_num; element++ )
+    for ( element = 0; element < element_num; element++ )
     {
-        int ip1;
-        int ip2;
-        int ip3;
-        double x1;
-        double x2;
-        double x3;
-        double y1;
-        double y2;
-        double y3;
         ip1 = element_node[0+element*nnodes];
         ip2 = element_node[1+element*nnodes];
         ip3 = element_node[2+element*nnodes];
@@ -2445,6 +3052,42 @@ void r8vec_print_some ( int n, double a[], int i_lo, int i_hi, string title )
 //****************************************************************************80
 
 double rhs ( double x, double y, double time )
+
+//****************************************************************************80
+//
+//  Purpose:
+//
+//    RHS gives the right-hand side of the differential equation.
+//
+//  Discussion:
+//
+//    The function specified here depends on the problem being
+//    solved.  This is one of the routines that a user will
+//    normally want to change.
+//
+//  Licensing:
+//
+//    This code is distributed under the GNU LGPL license.
+//
+//  Modified:
+//
+//    17 April 2006
+//
+//  Author:
+//
+//    C++ version by John Burkardt
+//
+//  Parameters:
+//
+//    Input, double X, Y, the coordinates of a point
+//    in the region, at which the right hand side of the
+//    differential equation is to be evaluated.
+//
+//    Input, double TIME, the current time.
+//
+//    Output, double RHS, the value of the right
+//    hand side of the differential equation at (X,Y).
+//
 {
 # define PI 3.141592653589793
 
@@ -3043,11 +3686,54 @@ void triangulation_order6_plot ( string file_name, int node_num, double node_xy[
 
 void xy_set ( int nx, int ny, int node_num, double xl, double xr, double yb,
               double yt, double node_xy[] )
+
+//****************************************************************************80
+//
+//  Purpose:
+//
+//    XY_SET sets the XY coordinates of the nodes.
+//
+//  Discussion:
+//
+//    The nodes are laid out in an evenly spaced grid, in the unit square.
+//
+//    The first node is at the origin.  More nodes are created to the
+//    right until the value of X = 1 is reached, at which point
+//    the next layer is generated starting back at X = 0, and an
+//    increased value of Y.
+//
+//  Licensing:
+//
+//    This code is distributed under the GNU LGPL license.
+//
+//  Modified:
+//
+//    07 April 2004
+//
+//  Author:
+//
+//    C++ version by John Burkardt
+//
+//  Parameters:
+//
+//    Input, int NX, NY, the number of elements in the X and
+//    Y direction.
+//
+//    Input, int NODE_NUM, the number of nodes.
+//
+//    Input, double XL, XR, YB, YT, the X coordinates of
+//    the left and right sides of the rectangle, and the Y coordinates
+//    of the bottom and top of the rectangle.
+//
+//    Output, double NODE_XY[2*NODE_NUM], the nodes.
+//
 {
-    //#pragma omp parallel for schedule(static,8)
-    for (int j = 0; j < 2*ny - 1; j++ )
+    int i;
+    int j;
+
+    for ( j = 0; j < 2*ny - 1; j++ )
     {
-        for (int i = 0; i < 2*nx - 1; i++ )
+        for ( i = 0; i < 2*nx - 1; i++ )
         {
             node_xy[0+(i+j*(2*nx-1))*2] =
                     ( double ( 2 * nx - i - 2 ) * xl
@@ -3063,128 +3749,3 @@ void xy_set ( int nx, int ny, int node_num, double xl, double xr, double yb,
     return;
 }
 
-
-int dgb_fa_serial ( int n, int ml, int mu, double a[], int pivot[] )
-{
-    int col = 2 * ml + mu + 1;
-    int i;
-    int i0;
-    int j;
-    int j0;
-    int j1;
-    int ju;
-    int jz;
-    int k;
-    int l;
-    int lm;
-    int m;
-    int mm;
-    double t;
-
-    m = ml + mu + 1;
-//
-//  Zero out the initial fill-in columns.
-//
-    j0 = mu + 2;
-    j1 = i4_min ( n, m ) - 1;
-
-    for ( jz = j0; jz <= j1; jz++ )
-    {
-        i0 = m + 1 - jz;
-        for ( i = i0; i <= ml; i++ )
-        {
-            a[i-1+(jz-1)*col] = 0.0;
-        }
-    }
-
-    jz = j1;
-    ju = 0;
-
-    for ( k = 1; k <= n-1; k++ )
-    {
-//
-//  Zero out the next fill-in column.
-//
-        jz = jz + 1;
-        if ( jz <= n )
-        {
-            for ( i = 1; i <= ml; i++ )
-            {
-                a[i-1+(jz-1)*col] = 0.0;
-            }
-        }
-//
-//  Find L = pivot index.
-//
-        lm = i4_min ( ml, n-k );
-        l = m;
-
-        for ( j = m+1; j <= m + lm; j++ )
-        {
-            if ( fabs ( a[l-1+(k-1)*col] ) < fabs ( a[j-1+(k-1)*col] ) )
-            {
-                l = j;
-            }
-        }
-
-        pivot[k-1] = l + k - m;
-//
-//  Zero pivot implies this column already triangularized.
-//
-        if ( a[l-1+(k-1)*col] == 0.0 )
-        {
-            cout << "\n";
-            cout << "DGB_FA - Fatal error!\n";
-            cout << "  Zero pivot on step " << k << "\n";
-            return k;
-        }
-//
-//  Interchange if necessary.
-//
-        t                = a[l-1+(k-1)*col];
-        a[l-1+(k-1)*col] = a[m-1+(k-1)*col];
-        a[m-1+(k-1)*col] = t;
-//
-//  Compute multipliers.
-//
-        for ( i = m+1; i <= m+lm; i++ )
-        {
-            a[i-1+(k-1)*col] = - a[i-1+(k-1)*col] / a[m-1+(k-1)*col];
-        }
-//
-//  Row elimination with column indexing.
-//
-        ju = i4_max ( ju, mu + pivot[k-1] );
-        ju = i4_min ( ju, n );
-        mm = m;
-
-        for ( j = k+1; j <= ju; j++ )
-        {
-            l = l - 1;
-            mm = mm - 1;
-
-            if ( l != mm )
-            {
-                t                 = a[l-1+(j-1)*col];
-                a[l-1+(j-1)*col]  = a[mm-1+(j-1)*col];
-                a[mm-1+(j-1)*col] = t;
-            }
-            for ( i = 1; i <= lm; i++ )
-            {
-                a[mm+i-1+(j-1)*col] = a[mm+i-1+(j-1)*col]
-                                      + a[mm-1+(j-1)*col] * a[m+i-1+(k-1)*col];
-            }
-        }
-    }
-
-    pivot[n-1] = n;
-
-    if ( a[m-1+(n-1)*col] == 0.0 )
-    {
-        cout << "\n";
-        cout << "DGB_FA - Fatal error!\n";
-        cout << "  Zero pivot on step " << n << "\n";
-        return n;
-    }
-    return 0;
-}

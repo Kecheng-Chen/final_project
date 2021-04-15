@@ -1,0 +1,28 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/mnt/d/homework/cs267/final/fem2d_openmp.cpp
+cmath
+-
+chrono
+-
+cstdlib
+-
+iostream
+-
+iomanip
+-
+fstream
+-
+ctime
+-
+cstring
+-
+omp.h
+-
+
