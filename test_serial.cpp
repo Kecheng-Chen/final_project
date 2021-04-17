@@ -75,8 +75,8 @@ int main ( )
 {
 # define NNODES 6
 # define QUAD_NUM 3
-# define NX 20
-# define NY 20
+# define NX 5
+# define NY 5
 
 # define ELEMENT_NUM ( NX - 1 ) * ( NY - 1 ) * 2
 # define NODE_NUM ( 2 * NX - 1 ) * ( 2 * NY - 1 )
@@ -224,8 +224,8 @@ int main ( )
         //std::cout << "Simulation Time2 = " << seconds << " seconds\n";
         job = 0;
         u = dgb_sl ( NODE_NUM, ib, ib, a, pivot, f, job );
-        //errors ( element_area, element_node, node_xy, u,
-        //        ELEMENT_NUM, NNODES, NODE_NUM, time, &el2, &eh1 );
+        errors ( element_area, element_node, node_xy, u,
+                ELEMENT_NUM, NNODES, NODE_NUM, time, &el2, &eh1 );
     }
     auto end_time = std::chrono::steady_clock::now();
     std::chrono::duration<double> diff = end_time - start_time;
@@ -870,7 +870,7 @@ int dgb_fa ( int n, int ml, int mu, double a[], int pivot[] )
     j0 = mu + 2;
     j1 = i4_min ( n, m ) - 1;
 
-    for ( jz = j0; jz <= j1; jz++ )
+    for (jz = j0; jz <= j1; jz++ )
     {
         i0 = m + 1 - jz;
         for ( i = i0; i <= ml; i++ )
@@ -940,7 +940,7 @@ int dgb_fa ( int n, int ml, int mu, double a[], int pivot[] )
         ju = i4_min ( ju, n );
         mm = m;
 
-        for ( j = k+1; j <= ju; j++ )
+        for (j = k+1; j <= ju; j++)
         {
             l = l - 1;
             mm = mm - 1;

@@ -78,8 +78,8 @@ int main ( )
 {
 # define NNODES 6
 # define QUAD_NUM 3
-# define NX 20
-# define NY 20
+# define NX 10
+# define NY 10
 
 # define ELEMENT_NUM ( NX - 1 ) * ( NY - 1 ) * 2
 # define NODE_NUM ( 2 * NX - 1 ) * ( 2 * NY - 1 )
@@ -209,8 +209,8 @@ int main ( )
             //std::cout << "Simulation Time2 = " << seconds << " seconds\n";
             job = 0;
             u = dgb_sl ( NODE_NUM, ib, ib, a, pivot, f, job );
-            //errors ( element_area, element_node, node_xy, u,
-            //        ELEMENT_NUM, NNODES, NODE_NUM, time, &el2, &eh1 );
+            errors ( element_area, element_node, node_xy, u,
+                    ELEMENT_NUM, NNODES, NODE_NUM, time, &el2, &eh1 );
         }
     }
     auto end_time = std::chrono::steady_clock::now();
