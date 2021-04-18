@@ -12,7 +12,8 @@ using namespace std;
 
 int main ( );
 __global__ void Kernel_3(double*a_d, double *x_d,int k,int m,int lm, int l, int col);
-__global__ void Kernel_4(double*a_d, double *x_d,int k,int m, int col);
+__global__ void Kernel_4(double*a_d, double *x_d,int k,int m, int col,int lm);
+__global__ void Kernel_5(double*a_d, double *x_d,int k,int m, int col, int lm);
 __global__ void check_pivot(double *a_d,double *column_d,int k,int col);
 __global__ void pre_zero(double *a_d,int jz,int ml,int col);
 __global__ void Kernel(double *a_d,int mm,int j_d,int j_u,int k,int lm,int col, int m);
@@ -83,8 +84,8 @@ int main ( )
 {
 # define NNODES 6
 # define QUAD_NUM 3
-# define NX 60
-# define NY 60
+# define NX 100
+# define NY 100
 
 # define ELEMENT_NUM ( NX - 1 ) * ( NY - 1 ) * 2
 # define NODE_NUM ( 2 * NX - 1 ) * ( 2 * NY - 1 )
@@ -961,13 +962,15 @@ double* dgb_fa ( int n, int ml, int mu, double a[], int pivot[], double b[])
         {
             lm = i4_min ( ml, n-k );
             l = pivot[k-1];
-            Kernel_3<<<dimGrid2,dimBlock2>>>(a_d,x_d,k,m,lm,l,col);
+            Kernel_3<<<ceil(float(lm)/float(16)),16>>>(a_d,x_d,k,m,lm,l,col);
         }
     }
 
     for ( k = n; 1 <= k; k--)
     {
-        Kernel_4<<<dimGrid2,dimBlock2>>>(a_d,x_d,k,m,col);
+        lm = i4_min ( k, m ) - 1;
+        Kernel_5<<<1,1>>>(a_d,x_d,k,m,col,lm);
+        Kernel_4<<<ceil(float(lm)/float(16)),16>>>(a_d,x_d,k,m,col,lm);
     }
 
     cudaFree(a_d);
@@ -1026,25 +1029,33 @@ __global__ void Kernel_2(double *a_d,int k,int m,int lm,int col)
 }
 
 __global__ void Kernel_3(double*a_d, double *x_d,int k,int m,int lm, int l, int col) {
+    int idx = (blockIdx.x*blockDim.x) + threadIdx.x;
     if ( l != k )
     {
-        double t = x_d[l-1];
-        x_d[l-1] = x_d[k-1];
-        x_d[k-1] = t;
+        if(idx==0){
+            double t = x_d[l-1];
+            x_d[l-1] = x_d[k-1];
+            x_d[k-1] = t;
+        }
     }
-    for (int i = 1; i <= lm; i++ )
-    {
+    __syncthreads();
+    if(idx>=0 && idx<=lm-1){
+        int i=idx+1;
         x_d[k+i-1] = x_d[k+i-1] + x_d[k-1] * a_d[m+i-1+(k-1)*col];
     }
 }
 
-__global__ void Kernel_4(double*a_d, double *x_d,int k,int m, int col) {
+__global__ void Kernel_5(double*a_d, double *x_d,int k,int m, int col, int lm) {
     x_d[k-1] = x_d[k-1] / a_d[m-1+(k-1)*col];
-    int lm = min ( k, m ) - 1;
-    int la = m - lm;
-    int lb = k - lm;
-    for (int i = 0; i <= lm-1; i++ )
+}
+
+__global__ void Kernel_4(double*a_d, double *x_d,int k,int m, int col, int lm) {
+    int idx = (blockIdx.x*blockDim.x) + threadIdx.x;
+    if (idx>= 0 && idx <= lm-1)
     {
+        int la = m - lm;
+        int lb = k - lm;
+        int i = idx;
         x_d[lb+i-1] = x_d[lb+i-1] - x_d[k-1] * a_d[la+i-1+(k-1)*col];
     }
 }
