@@ -75,8 +75,8 @@ int main ( )
 {
 # define NNODES 6
 # define QUAD_NUM 3
-# define NX 5
-# define NY 5
+# define NX 30
+# define NY 30
 
 # define ELEMENT_NUM ( NX - 1 ) * ( NY - 1 ) * 2
 # define NODE_NUM ( 2 * NX - 1 ) * ( 2 * NY - 1 )
@@ -882,6 +882,7 @@ int dgb_fa ( int n, int ml, int mu, double a[], int pivot[] )
     jz = j1;
     ju = 0;
 
+    auto start_time = std::chrono::steady_clock::now();
     for ( k = 1; k <= n-1; k++ )
     {
 //
@@ -958,6 +959,10 @@ int dgb_fa ( int n, int ml, int mu, double a[], int pivot[] )
             }
         }
     }
+    auto end_time = std::chrono::steady_clock::now();
+    std::chrono::duration<double> diff = end_time - start_time;
+    double seconds = diff.count();
+    std::cout << "Simulation Time = " << seconds << " seconds\n";
 
     pivot[n-1] = n;
 

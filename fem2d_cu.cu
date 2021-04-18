@@ -11,6 +11,8 @@
 using namespace std;
 
 int main ( );
+__global__ void Kernel_3(double*a_d, double *x_d,int k,int m,int lm, int l, int col);
+__global__ void Kernel_4(double*a_d, double *x_d,int k,int m, int col);
 __global__ void check_pivot(double *a_d,double *column_d,int k,int col);
 __global__ void pre_zero(double *a_d,int jz,int ml,int col);
 __global__ void Kernel(double *a_d,int mm,int j_d,int j_u,int k,int lm,int col, int m);
@@ -31,7 +33,7 @@ void assemble_adjust ( int node_num, double node_xy[], int nnodes,
 int bandwidth ( int nnodes, int element_num, int element_node[],
                 int node_num );
 void compare ( int node_num, double node_xy[], double time, double u[] );
-int dgb_fa ( int n, int ml, int mu, double a[], int pivot[] );
+double *dgb_fa ( int n, int ml, int mu, double a[], int pivot[], double x[]);
 void dgb_print_some ( int m, int n, int ml, int mu, double a[], int ilo,
                       int jlo, int ihi, int jhi, string title );
 double *dgb_sl ( int n, int ml, int mu, double a[], int pivot[],
@@ -81,8 +83,8 @@ int main ( )
 {
 # define NNODES 6
 # define QUAD_NUM 3
-# define NX 5
-# define NY 5
+# define NX 30
+# define NY 30
 
 # define ELEMENT_NUM ( NX - 1 ) * ( NY - 1 ) * 2
 # define NODE_NUM ( 2 * NX - 1 ) * ( 2 * NY - 1 )
@@ -223,13 +225,13 @@ int main ( )
         //std::cout << "Simulation Time1 = " << seconds << " seconds\n";
 
         //start_time = std::chrono::steady_clock::now();
-        ierr = dgb_fa ( NODE_NUM, ib, ib, a, pivot );
+        u = dgb_fa ( NODE_NUM, ib, ib, a, pivot, f);
         //end_time = std::chrono::steady_clock::now();
         //diff = end_time - start_time;
         //seconds = diff.count();
         //std::cout << "Simulation Time2 = " << seconds << " seconds\n";
         job = 0;
-        u = dgb_sl ( NODE_NUM, ib, ib, a, pivot, f, job );
+        //u = dgb_sl ( NODE_NUM, ib, ib, a, pivot, f, job );
         errors ( element_area, element_node, node_xy, u,
                  ELEMENT_NUM, NNODES, NODE_NUM, time, &el2, &eh1 );
     }
@@ -852,7 +854,7 @@ void compare ( int node_num, double node_xy[], double time, double u[] )
 }
 //****************************************************************************80
 
-int dgb_fa ( int n, int ml, int mu, double a[], int pivot[] )
+double* dgb_fa ( int n, int ml, int mu, double a[], int pivot[], double b[])
 {
     int col = 2 * ml + mu + 1;
     int i;
@@ -888,15 +890,26 @@ int dgb_fa ( int n, int ml, int mu, double a[], int pivot[] )
     jz = j1;
     ju = 0;
 
+    double* x = new double[n];
+
+    for ( i = 0; i < n; i++ )
+    {
+        x[i] = b[i];
+    }
+
     double *a_d;
     double *column_d;
+    double *x_d;
     double *column = new double[col];
     cudaMalloc(&a_d,sizeof(double)*(n)*(col));
     cudaMalloc(&column_d,sizeof(double)*(col));
     dim3 dimBlock(16,16);
     dim3 dimGrid(ceil(float(col)/float(16)),ceil(float(n)/float(16)));
+    dim3 dimBlock2(1,1);
+    dim3 dimGrid2(1,1);
     cudaMemcpy(a_d, a, sizeof(double)*(n)*(col),cudaMemcpyHostToDevice);
 
+    auto start_time = std::chrono::steady_clock::now();
     for ( k = 1; k <= n-1; k++ )
     {
         jz = jz + 1;
@@ -904,7 +917,7 @@ int dgb_fa ( int n, int ml, int mu, double a[], int pivot[] )
         {
             pre_zero<<<dimGrid , dimBlock>>>(a_d,jz,ml,col);
         }
-        
+
         lm = i4_min ( ml, n-k );
         l = m;
 
@@ -931,11 +944,36 @@ int dgb_fa ( int n, int ml, int mu, double a[], int pivot[] )
         Kernel_2<<<dimGrid , dimBlock>>>(a_d,k,m,lm,col);
         Kernel<<<dimGrid , dimBlock>>>(a_d,mm,k+1,ju,k,lm,col,m);
     }
-    cudaMemcpy(a,a_d,sizeof(double)*(n*col),cudaMemcpyDeviceToHost);
-    cudaFree(a_d);
+    auto end_time = std::chrono::steady_clock::now();
+    std::chrono::duration<double> diff = end_time - start_time;
+    double seconds = diff.count();
+    std::cout << "Simulation Time = " << seconds << " seconds\n";
+
+    //cudaMemcpy(a,a_d,sizeof(double)*(n*col),cudaMemcpyDeviceToHost);
     cudaFree(column_d);
+    cudaMalloc(&x_d,sizeof(double)*(n));
+    cudaMemcpy(x_d, x, sizeof(double)*(n),cudaMemcpyHostToDevice);
     pivot[n-1] = n;
-    return 0;
+
+    if ( 1 <= ml )
+    {
+        for ( k = 1; k <= n-1; k++ )
+        {
+            lm = i4_min ( ml, n-k );
+            l = pivot[k-1];
+            Kernel_3<<<dimGrid2,dimBlock2>>>(a_d,x_d,k,m,lm,l,col);
+        }
+    }
+
+    for ( k = n; 1 <= k; k--)
+    {
+        Kernel_4<<<dimGrid2,dimBlock2>>>(a_d,x_d,k,m,col);
+    }
+
+    cudaFree(a_d);
+    cudaMemcpy(x,x_d,sizeof(double)*(n),cudaMemcpyDeviceToHost);
+    cudaFree(x_d);
+    return x;
 }
 
 __global__ void pre_zero(double *a_d,int jz,int ml,int col) {
@@ -965,7 +1003,7 @@ __global__ void Kernel(double *a_d,int mm,int j_d,int j_u,int k,int lm,int col,i
         if(idx>=0 && idx<=lm-1){
             int mm_temp=mm+k-(idy+1);
             a_d[mm_temp+idx+idy*col] = a_d[mm_temp+idx+idy*col]
-                                      + a_d[mm_temp-1+idy*col] * a_d[m+idx+(k-1)*col];
+                                       + a_d[mm_temp-1+idy*col] * a_d[m+idx+(k-1)*col];
         }
     }
 }
@@ -991,6 +1029,30 @@ __global__ void Kernel_2(double *a_d,int k,int m,int lm,int col)
         if(idx>=m && idx<=m+lm-1){
             a_d[idx+idy*col] = -a_d[idx+idy*col]/a_d[m-1+idy*col];
         }
+    }
+}
+
+__global__ void Kernel_3(double*a_d, double *x_d,int k,int m,int lm, int l, int col) {
+    if ( l != k )
+    {
+        double t = x_d[l-1];
+        x_d[l-1] = x_d[k-1];
+        x_d[k-1] = t;
+    }
+    for (int i = 1; i <= lm; i++ )
+    {
+        x_d[k+i-1] = x_d[k+i-1] + x_d[k-1] * a_d[m+i-1+(k-1)*col];
+    }
+}
+
+__global__ void Kernel_4(double*a_d, double *x_d,int k,int m, int col) {
+    x_d[k-1] = x_d[k-1] / a_d[m-1+(k-1)*col];
+    int lm = min ( k, m ) - 1;
+    int la = m - lm;
+    int lb = k - lm;
+    for (int i = 0; i <= lm-1; i++ )
+    {
+        x_d[lb+i-1] = x_d[lb+i-1] - x_d[k-1] * a_d[la+i-1+(k-1)*col];
     }
 }
 
@@ -1121,65 +1183,6 @@ void dgb_print_some ( int m, int n, int ml, int mu, double a[], int ilo,
 
 double *dgb_sl ( int n, int ml, int mu, double a[], int pivot[],
                  double b[], int job )
-
-//****************************************************************************80
-//
-//  Purpose:
-//
-//    DGB_SL solves a system factored by DGB_FA.
-//
-//  Discussion:
-//
-//    The DGB storage format is used for an M by N banded matrix, with lower bandwidth ML
-//    and upper bandwidth MU.  Storage includes room for ML extra superdiagonals,
-//    which may be required to store nonzero entries generated during Gaussian
-//    elimination.
-//
-//    The original M by N matrix is "collapsed" downward, so that diagonals
-//    become rows of the storage array, while columns are preserved.  The
-//    collapsed array is logically 2*ML+MU+1 by N.
-//
-//    The two dimensional array can be further reduced to a one dimensional
-//    array, stored by columns.
-//
-//  Licensing:
-//
-//    This code is distributed under the GNU LGPL license.
-//
-//  Modified:
-//
-//    20 February 2004
-//
-//  Author:
-//
-//    C++ version by John Burkardt
-//
-//  Reference:
-//
-//    Jack Dongarra, Jim Bunch, Cleve Moler, Pete Stewart,
-//    LINPACK User's Guide,
-//    SIAM, 1979
-//
-//  Parameters:
-//
-//    Input, int N, the order of the matrix.
-//    N must be positive.
-//
-//    Input, int ML, MU, the lower and upper bandwidths.
-//    ML and MU must be nonnegative, and no greater than N-1.
-//
-//    Input, double A[(2*ML+MU+1)*N], the LU factors from DGB_FA.
-//
-//    Input, int PIVOT[N], the pivot vector from DGB_FA.
-//
-//    Input, double B[N], the right hand side vector.
-//
-//    Input, int JOB.
-//    0, solve A * x = b.
-//    nonzero, solve A' * x = b.
-//
-//    Output, double DGB_SL[N], the solution.
-//
 {
     int col = 2 * ml + mu + 1;
     int i;
@@ -1227,9 +1230,7 @@ double *dgb_sl ( int n, int ml, int mu, double a[], int pivot[],
                 }
             }
         }
-//
-//  Solve U * X = Y.
-//
+
         for ( k = n; 1 <= k; k-- )
         {
             x[k-1] = x[k-1] / a[m-1+(k-1)*col];
@@ -1242,49 +1243,6 @@ double *dgb_sl ( int n, int ml, int mu, double a[], int pivot[],
             }
         }
     }
-//
-//  Solve A' * X = B.
-//
-    else
-    {
-//
-//  Solve U' * Y = B.
-//
-        for ( k = 1; k <= n; k++ )
-        {
-            lm = i4_min ( k, m ) - 1;
-            la = m - lm;
-            lb = k - lm;
-            for ( i = 0; i <= lm-1; i++ )
-            {
-                x[k-1] = x[k-1] - x[lb+i-1] * a[la+i-1+(k-1)*col];
-            }
-            x[k-1] = x[k-1] / a[m-1+(k-1)*col];
-        }
-//
-//  Solve L' * X = Y.
-//
-        if ( 1 <= ml )
-        {
-            for ( k = n-1; 1 <= k; k-- )
-            {
-                lm = i4_min ( ml, n-k );
-                for ( i = 1; i <= lm; i++ )
-                {
-                    x[k-1] = x[k-1] + x[k+i-1] * a[m+i-1+(k-1)*col];
-                }
-                l = pivot[k-1];
-
-                if ( l != k )
-                {
-                    t      = x[l-1];
-                    x[l-1] = x[k-1];
-                    x[k-1] = t;
-                }
-            }
-        }
-    }
-
     return x;
 }
 //****************************************************************************80*
@@ -3772,4 +3730,3 @@ void xy_set ( int nx, int ny, int node_num, double xl, double xr, double yb,
     }
     return;
 }
-
