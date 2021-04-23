@@ -75,8 +75,8 @@ int main ( )
 {
 # define NNODES 6
 # define QUAD_NUM 3
-# define NX 100
-# define NY 100
+# define NX 20
+# define NY 20
 
 # define ELEMENT_NUM ( NX - 1 ) * ( NY - 1 ) * 2
 # define NODE_NUM ( 2 * NX - 1 ) * ( 2 * NY - 1 )

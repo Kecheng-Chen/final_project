@@ -1,0 +1,6 @@
+/mnt/d/homework/cs267/final/cmake-build-debug/CMakeFiles/edit_cache.dir
+/mnt/d/homework/cs267/final/cmake-build-debug/CMakeFiles/fem2d_serial.dir
+/mnt/d/homework/cs267/final/cmake-build-debug/CMakeFiles/test_op.dir
+/mnt/d/homework/cs267/final/cmake-build-debug/CMakeFiles/rebuild_cache.dir
+/mnt/d/homework/cs267/final/cmake-build-debug/CMakeFiles/test_serial.dir
+/mnt/d/homework/cs267/final/cmake-build-debug/CMakeFiles/fem2d_op.dir
