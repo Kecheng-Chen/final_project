@@ -1,2 +1,2 @@
-# final_project
-CS267 final project
+# UCB CS267 Course Project
+* Application of Parallel Computers
